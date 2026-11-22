@@ -2,160 +2,198 @@ import './style.css'
 import {cat,icon} from './art'
 
 type Point={x:number;y:number}
-type Look={bodyColor:string;idleFace:string}
 type Ability={id:string;name:string;desc:string;cd:number;radius:number;duration:number;target:'cell'|'circle'}
 type State={
   status:'ready'|'running'|'clear'|'lost';roundId:string;remainingMs:number;timeLimitMs:number
   width:number;height:number;map:string[];npc:Point;goal:Point;start:Point;face:string;beacon?:Point
-  objects:(Point & {closed:boolean;remainingMs:number})[];appearance:Look;abilities:Ability[];owned:string[]
+  objects:(Point & {closed:boolean;remainingMs:number})[];appearance:{bodyColor:string};abilities:Ability[];owned:string[]
   clearsSinceUnlock:number;nextUnlockAt:number|null;selectedAbilityId:string;unlocked:string;cooldownRemainingMs:number
+  skin:string;scoreMs:number;signedIn:boolean;loginConfigured:boolean
 }
-const app=document.querySelector<HTMLElement>('#app')!
-app.innerHTML=`
-<main>
-  <header><div class="title"><span class="gate-logo" aria-hidden="true"></span><h1>道をふさげ。</h1></div><span class="stage-tag">STAGE 01 <b>石垣の庭</b></span></header>
-  <div class="layout">
-    <section class="board-frame" aria-label="ステージ">
-      <div class="hud"><strong id="phase">接続中</strong><span>残り <b id="timer">––.–</b> 秒</span></div>
-      <div class="meter"><i id="clock-bar"></i></div>
-      <canvas id="map" width="1408" height="896" aria-label="石垣の庭。プレイ中にクリックまたはタップで能力を発動">Canvas対応のブラウザが必要です。</canvas>
-      <footer><span><i class="key start"></i> スタート</span><span><i class="key goal"></i> ゴール</span><span id="board-help">猫がゴールするまでに進路をふさごう</span></footer>
-    </section>
-    <aside>
-      <div class="panel"><h2>使う能力</h2>
-        <div class="ability-heading"><canvas id="active-icon" width="32" height="32"></canvas><div><strong id="ability-name">…</strong><small id="charge"></small></div></div>
-        <p id="ability-desc"></p>
-        <div id="collection" aria-label="所持能力"></div><p id="progress"></p>
-      </div>
-      <details class="panel appearance" id="appearance"><summary>猫の見た目</summary>
-        <div class="custom"><canvas id="preview" width="32" height="32"></canvas><label>平常時の表情<select id="idle">
-          <option value="calm">すまし顔</option><option value="fierce">きりっ</option><option value="wink">ウインク</option>
-          <option value="happy">にっこり</option><option value="brow">片眉上げ</option><option value="sleepy">半目</option>
-        </select></label></div>
-        <label>体色 <span class="colors"><input type="color" id="picker" aria-label="体色を選ぶ"><input id="hex" maxlength="7" aria-label="カラーコード" spellcheck="false"></span></label>
-      </details>
-      <button id="action" disabled>ゲーム開始</button><p id="notice" role="status"></p>
-    </aside>
-  </div>
-</main>`
-function el<T extends HTMLElement>(id:string){return document.getElementById(id) as T}
-const canvas=el<HTMLCanvasElement>('map'), ctx=canvas.getContext('2d')!
-const idle=el<HTMLSelectElement>('idle'), picker=el<HTMLInputElement>('picker'), hex=el<HTMLInputElement>('hex')
-const action=el<HTMLButtonElement>('action')
-let s:State|null=null, selected='wall', look:Look={idleFace:'calm',bodyColor:'#efe9ff'}
-let choosing=true, sending=false, sequence=0, lastApplied=0, cursor:Point|null=null
-let collectionKey='', syncedRound='', notice='', noticeUntil=0
-let previousNpc:Point|null=null, received=0
-const tile=128
-function tell(msg:string){notice=msg;noticeUntil=performance.now()+2600;el('notice').textContent=msg}
-function ability(){return s!.abilities.find(a=>a.id===selected)!}
-function image(id:string,source:HTMLCanvasElement){
-  const c=el<HTMLCanvasElement>(id),g=c.getContext('2d')!
-  g.clearRect(0,0,c.width,c.height);g.drawImage(source,0,0)
+type Page='home'|'stage'|'equipment'|'skins'|'ranking'|'feedback'|'play'|'result'
+const coats:Record<string,{name:string;color:string}>={
+  snow:{name:'しろねこ',color:'#F8F1DD'},tabby:{name:'茶トラ',color:'#DAA46F'},
+  tux:{name:'ハチワレ',color:'#534E52'},calico:{name:'三毛',color:'#F8EACF'}
 }
-function preview(){image('preview',cat(look.idleFace,look.bodyColor))}
-function setLook(v:Look){
-  look={...v}; idle.value=look.idleFace;picker.value=look.bodyColor;hex.value=look.bodyColor
-  hex.setCustomValidity('');preview()
+document.querySelector('#app')!.innerHTML=`
+<main class="notebook">
+<div class="rings" aria-hidden="true"></div>
+<div id="sheet">
+  <nav id="nav"><button id="back">← 戻る</button><span>作戦ノート</span></nav>
+  <section id="home" hidden><div class="cover">
+    <div class="cover-art"><canvas id="cover-cat" width="32" height="32" aria-hidden="true"></canvas><i></i></div>
+    <h1>道をふさげ<span>。</span></h1><p>猫のゴールを阻止せよ。</p></div>
+    <div class="menu"><button data-page="stage">スタート <b>↗</b></button><button data-page="ranking">ランキング</button><button data-page="skins">スキン</button><button data-page="feedback">意見</button></div></section>
+  <section id="stage" hidden><h2>ステージを選ぶ</h2><button id="garden" class="stage-card"><canvas width="220" height="140" id="mini"></canvas><span><small>STAGE 01</small><strong>石垣の庭</strong><em id="stage-limit"></em></span></button></section>
+  <section id="equipment" hidden><h2>能力を選ぶ</h2><p id="progress"></p><div id="abilities" class="cards"></div><div id="brief"></div><button class="primary" id="begin">作戦開始 →</button></section>
+  <section id="skins" hidden><h2>スキン</h2><div class="cards skins" id="coats"></div></section>
+  <section id="ranking" hidden><h2>ランキング</h2><p>妨害を解いた後、ゴールまでにかかる時間。自己ベストを長い順に掲載します。</p><div id="ranks"></div></section>
+  <section id="feedback" hidden><h2>意見</h2><form id="form"><label for="comment">石垣の庭を遊んだ感想・改善案</label><textarea id="comment" rows="5" required maxlength="1000"></textarea><button class="primary">意見を保存</button><small>このゲームサーバーの意見帳に保存します。</small></form></section>
+  <section id="result" hidden><div id="stamp"></div><canvas id="result-cat" width="64" height="64" aria-hidden="true"></canvas><h2 id="outcome"></h2><p id="score"></p><p id="unlock"></p><div class="actions"><button class="primary" data-page="equipment">再挑戦</button><button data-page="ranking">ランキング</button></div></section>
+</div>
+<section id="play" hidden><div class="hud"><button id="retire" aria-label="中断してホームに戻る">← 中断</button><span id="clock">残り <b id="timer"></b> 秒</span></div>
+<canvas id="map" width="1408" height="896" aria-label="石垣の庭。クリックで能力を発動"></canvas>
+<div class="sticky"><canvas id="active-icon" width="32" height="32"></canvas><b id="ability-name"></b><span id="charge"></span></div></section>
+<div id="notice" role="status"></div></main>`
+function el<T extends HTMLElement=HTMLElement>(id:string){return document.getElementById(id) as T}
+const canvas=el<HTMLCanvasElement>('map'),ctx=canvas.getContext('2d')!,tile=128
+let s:State|null=null,page:Page='home',selected='wall',sending=false,sequence=0,lastApplied=0
+let cursor:Point|null=null,previousNpc:Point|null=null,received=0,mark:(Point&{at:number})|null=null
+let wake:ReturnType<typeof setTimeout>,rankingVersion=0
+function tell(message:string){clearTimeout(wake);el('notice').textContent=message;wake=setTimeout(()=>el('notice').textContent='',4000)}
+function paint(canvas:HTMLCanvasElement,source:HTMLCanvasElement){
+  const g=canvas.getContext('2d')!;g.clearRect(0,0,canvas.width,canvas.height);g.imageSmoothingEnabled=false;g.drawImage(source,0,0,canvas.width,canvas.height)
 }
-idle.onchange=()=>{look.idleFace=idle.value;preview()}
-picker.oninput=()=>setLook({...look,bodyColor:picker.value})
-hex.oninput=()=>{
-  if(/^#[\da-f]{6}$/i.test(hex.value)) setLook({...look,bodyColor:hex.value})
-  else hex.setCustomValidity('#と6桁の16進数を入力してください')
+function picture(source:HTMLCanvasElement){
+  const img=document.createElement('canvas');img.width=img.height=32;paint(img,source);return img
 }
-function update(){
-  if(!s) return
-  const playing=s.status==='running', setup=!playing && choosing
-  const a=ability()
-  el('phase').textContent=playing?'プレイ中':setup?'準備':s.status==='clear'?'クリア！':'ゴール到着'
-  el('timer').textContent=((setup?s.timeLimitMs:s.remainingMs)/1000).toFixed(1)
-  el('clock-bar').style.width=(setup?100:s.remainingMs/s.timeLimitMs*100)+'%'
-  image('active-icon',icon(a.id));el('ability-name').textContent=a.name;el('ability-desc').textContent=a.desc
-  el('charge').textContent=playing?(s.cooldownRemainingMs?'あと '+(s.cooldownRemainingMs/1000).toFixed(1)+' 秒':'発動できます'):'再使用 '+a.cd/1000+' 秒'
-  const key=[...s.owned,selected,String(setup)].join('/')
-  if(key!==collectionKey){
-    collectionKey=key
-    const list=el('collection');list.replaceChildren()
-    for(const id of s.owned){
-      const item=s.abilities.find(a=>a.id===id)!
-      const btn=document.createElement('button'), img=document.createElement('canvas')
-      img.width=img.height=32;img.getContext('2d')!.drawImage(icon(id),0,0)
-      btn.append(img);btn.type='button';btn.title=item.name;btn.setAttribute('aria-label',item.name)
-      btn.setAttribute('aria-pressed',String(id===selected));btn.disabled=!setup
-      btn.onclick=()=>{selected=id;update()};list.append(btn)
+function card(label:string,img:HTMLCanvasElement,active:boolean,click:()=>void){
+  const button=document.createElement('button');button.className='card';button.setAttribute('aria-pressed',String(active))
+  button.append(picture(img),document.createTextNode(label));button.onclick=click;return button
+}
+function show(next:Page){
+  page=next;rankingVersion++;el('notice').textContent=''
+  for(const id of ['home','stage','equipment','skins','ranking','feedback','play','result'])el(id).hidden=id!==next
+  el('sheet').hidden=next==='play';document.body.classList.toggle('in-game',next==='play')
+  el('nav').hidden=next==='home';cursor=null
+  if(next!=='play' && document.fullscreenElement)void document.exitFullscreen().catch(()=>{})
+  if(next==='ranking')void ranks()
+  if(next==='stage' && s){
+    const g=el<HTMLCanvasElement>('mini').getContext('2d')!
+    for(let y=0;y<s.height;y++)for(let x=0;x<s.width;x++){
+      g.fillStyle=s.map[y][x]==='#'?'#515c53':'#e4e0c7';g.fillRect(x*20,y*20,19,19)
     }
+    g.fillStyle='#b34c36';g.fillRect(s.goal.x*20-5,s.goal.y*20-5,10,10)
+    el('stage-limit').textContent='制限時間 '+s.timeLimitMs/1000+'秒　→'
   }
-  el('progress').textContent='所持 '+s.owned.length+' / '+s.abilities.length+'　'+
-    (s.nextUnlockAt===null?'全能力解放済み':'次の解放まであと'+(s.nextUnlockAt-s.clearsSinceUnlock)+'勝')
-  el('appearance').hidden=!setup
-  action.disabled=sending
-  action.textContent=playing?'中断して選び直す':setup?'ゲーム開始':'再挑戦'
-  const unlocked=s.abilities.find(a=>a.id===s!.unlocked)
-  el('notice').textContent=performance.now()<noticeUntil?notice:setup?'24秒間、猫のゴール到着を阻止しよう。':playing?'盤面をクリックして発動':s.status==='clear'?(unlocked?'クリア！「'+unlocked.name+'」を解放しました。':'クリア！ ゴールを守りました。'):'猫がゴールに到着しました。'
+  if(next==='home')paint(el('cover-cat'),cat('brow',coats[s?.skin??'snow']?.color??coats.snow.color,s?.skin))
+  if(!s)return
+  if(next==='skins')el('coats').replaceChildren(...Object.entries(coats).map(([id,v])=>
+    card(v.name,cat('calm',v.color,id),s!.skin===id,async()=>{if(await send('skin',{skin:id}))show('skins')})))
+  if(next==='equipment'){
+    el('abilities').replaceChildren(...s.abilities.map(a=>{
+      const owned=s!.owned.includes(a.id)
+      const btn=card(a.name,icon(a.id),selected===a.id,()=>{selected=a.id;show('equipment')})
+      btn.disabled=!owned;btn.title=owned?a.desc:'未解放';return btn
+    }))
+    const a=s.abilities.find(a=>a.id===selected)!
+    el('brief').textContent=a.name+'　'+a.desc+'　再使用 '+a.cd/1000+'秒'
+    el('progress').textContent=s.nextUnlockAt===null?'全能力解放済み':'次の解放まであと'+(s.nextUnlockAt-s.clearsSinceUnlock)+'勝'
+  }
+  if(next==='result'){
+    const won=s.status==='clear'
+    paint(el('result-cat'),cat(s.face,coats[s.skin]?.color??s.appearance.bodyColor,s.skin))
+    el('stamp').textContent=won?'作戦成功':'作戦終了'
+    el('outcome').textContent=won?'ゴールを守った！':'猫がゴールに到着'
+    el('score').textContent=won?'妨害なしでゴールまで　'+(s.scoreMs/1000).toFixed(2)+' 秒':''
+    el('unlock').textContent=s.unlocked?'新能力「'+s.abilities.find(a=>a.id===s!.unlocked)?.name+'」を解放':''
+  }
+}
+async function api(name:string,body?:unknown){
+  const res=await fetch('/api/'+name,body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  const data=await res.json()
+  if(!res.ok)throw Error(data.error??'通信に失敗しました')
+  return data
 }
 async function request(name='state',body?:unknown){
   const serial=++sequence
   try{
-    const response=await fetch('/api/'+name,body===undefined?{cache:'no-store'}:{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
-    })
-    const data=await response.json()
-    if(serial<lastApplied) return
+    const next:State=await api(name,body)
+    if(serial<lastApplied)return false
     lastApplied=serial
-    if(!response.ok) tell(data.error??'操作を受け付けられませんでした')
-    if(!data.abilities) return
-    const next=data as State
-    const changed=!s || next.roundId!==syncedRound
-    previousNpc=s && !changed && next.status==='running' && Math.hypot(s.npc.x-next.npc.x,s.npc.y-next.npc.y)<.5?s.npc:null
-    received=performance.now()
-    if(changed){selected=next.selectedAbilityId;setLook(next.appearance);syncedRound=next.roundId}
-    if(next.status==='ready') choosing=true
-    else if(changed || s?.status!==next.status) choosing=false
-    s=next;update()
-  }catch{tell('サーバーに接続できません。再接続しています。')}
+    const prev=s
+    previousNpc=prev?.roundId===next.roundId && Math.hypot(prev.npc.x-next.npc.x,prev.npc.y-next.npc.y)<.5?prev.npc:null
+    received=performance.now();s=next
+    if(!prev || prev.roundId!==next.roundId)selected=next.selectedAbilityId
+    if(next.status==='running'){
+      if(page!=='play')show('play')
+      el('timer').textContent=(next.remainingMs/1000).toFixed(1)
+      const a=next.abilities.find(a=>a.id===selected)!
+      paint(el('active-icon'),icon(a.id));el('ability-name').textContent=a.name
+      el('charge').textContent=next.cooldownRemainingMs?'あと '+(next.cooldownRemainingMs/1000).toFixed(1)+'秒':'使用可'
+    } else if(prev?.status==='running')show(next.status==='ready'?'home':'result')
+    else if(!prev)show(location.hash.startsWith('#rank')?'ranking':page)
+    return true
+  }catch(error){tell(error instanceof Error?error.message:'接続できません');return false}
 }
 async function send(name:string,body:unknown){
-  if(sending) return
-  sending=true;action.disabled=true
-  try{await request(name,body)}finally{sending=false;update()}
+  if(sending)return false
+  sending=true
+  try{return await request(name,body)}finally{sending=false}
 }
-action.onclick=()=>{
+async function cast(p:Point){
+  if(!s || !await send('use',{...p,roundId:s.roundId}))return
+  mark={...p,at:performance.now()}
+}
+async function ranks(){
+  const panel=el('ranks'), version=rankingVersion
+  panel.replaceChildren()
   if(!s)return
-  if(s.status==='running') void send('retire',{roundId:s.roundId})
-  else if(!choosing){choosing=true;update()}
-  else if(hex.reportValidity()) void send('start',{abilityId:selected,appearance:look})
+  if(!s.signedIn){
+    const message=document.createElement('p')
+    message.textContent=location.hash==='#rank-login-error'?'ログインを完了できませんでした。':s.loginConfigured?'閲覧と記録の登録にはログインしてください。':'このサーバーではGoogleログインが未設定です。'
+    panel.append(message)
+    if(s.loginConfigured){const login=document.createElement('a');login.href='/auth/google';login.className='primary';login.textContent='Googleでログイン';panel.append(login)}
+    return
+  }
+  try{
+    const {rows}=await api('ranking')
+    if(version!==rankingVersion)return
+    if(!rows.length)panel.textContent='まだ記録がありません。'
+    const list=document.createElement('ol')
+    for(const r of rows){
+      const li=document.createElement('li');li.textContent=r.rank+'位　'+r.player+'　'+r.ability+'　'+(r.ms/1000).toFixed(2)+'秒';list.append(li)
+    }
+    const logout=document.createElement('button');logout.textContent='ログアウト';logout.onclick=async()=>{if(await send('logout',{}))show('ranking')}
+    panel.append(list,logout)
+  }catch(e){tell(String(e))}
 }
+document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>show(b.dataset.page as Page))
+el('garden').onclick=()=>show('equipment')
+el('back').onclick=()=>show(page==='equipment'?'stage':'home')
+el('begin').onclick=async()=>{
+  if(!s || sending)return
+  if(!document.fullscreenElement)void document.documentElement.requestFullscreen?.().catch(()=>{})
+  if(!await send('start',{abilityId:selected}) && document.fullscreenElement)void document.exitFullscreen().catch(()=>{})
+}
+el('retire').onclick=()=>{if(s)void send('retire',{roundId:s.roundId})}
+el<HTMLFormElement>('form').onsubmit=async e=>{
+  e.preventDefault();const field=el<HTMLTextAreaElement>('comment')
+  if(await send('feedback',{text:field.value.trim()})){field.value='';show('home');tell('意見を保存しました。')}
+}
+show('home')
+async function poll(){if(!sending)await request();setTimeout(poll,page==='play'?200:1200)}
+void poll();draw()
 function coords(e:PointerEvent|MouseEvent):Point{
   const r=canvas.getBoundingClientRect()
   return {x:(e.clientX-r.left)*canvas.width/r.width/tile,y:(e.clientY-r.top)*canvas.height/r.height/tile}
 }
 canvas.onpointermove=e=>cursor=coords(e);canvas.onpointerleave=()=>cursor=null
 canvas.onclick=e=>{
-  if(s?.status==='running') void send('use',{roundId:s.roundId,...coords(e)})
+  if(s?.status==='running') void cast(coords(e))
 }
 function draw(){
   requestAnimationFrame(draw)
-  if(!s)return
+  if(!s || page!=='play')return
   ctx.imageSmoothingEnabled=false
   const box=(x:number,y:number,w:number,h:number,color:string)=>{ctx.fillStyle=color;ctx.fillRect(x,y,w,h)}
   for(let y=0;y<s.height;y++)for(let x=0;x<s.width;x++){
     const px=x*tile,py=y*tile
-    box(px,py,tile,tile,(x+y)%2?'#9aba91':'#a3c29a')
-    box(px+14+(x*17+y*3)%80,py+92,4,8,'#87ac80');box(px+19+(x*17+y*3)%80,py+96,5,4,'#87ac80')
+    box(px,py,tile,tile,(x+y)%2?'#e3dfc6':'#ebe7d1')
+    box(px+14+(x*17+y*3)%80,py+92,4,8,'#bbb997');box(px+19+(x*17+y*3)%80,py+96,5,4,'#bbb997')
     if(s.map[y][x]==='#'){
-      box(px,py,128,128,'#676679');box(px+3,py+3,122,103,'#ab9fa9')
-      box(px+3,py+3,122,9,'#d0c4c5');box(px+3,py+104,122,8,'#817986')
-      box(px+3,py+50,122,5,'#7e7584');box(px+46,py+4,5,46,'#847c89');box(px+86,py+55,5,48,'#847c89')
-      box(px+13,py+13,26,5,'#c7bbbc')
+      box(px,py,128,128,'#454b48');box(px+3,py+3,122,103,'#90988b')
+      box(px+3,py+3,122,9,'#bac0ae');box(px+3,py+104,122,8,'#687269')
+      box(px+3,py+50,122,5,'#5a655f');box(px+46,py+4,5,46,'#707b71');box(px+86,py+55,5,48,'#707b71')
+      box(px+13,py+13,26,5,'#c4c8ad')
     }
   }
   function pad(p:Point,label:string,color:string){
     const x=p.x*tile,y=p.y*tile;box(x-48,y-48,96,96,color);box(x-40,y-40,80,80,'#364d49')
     ctx.font='bold 40px monospace';ctx.textAlign='center';ctx.fillStyle=color;ctx.fillText(label,x,y+14)
   }
-  pad(s.start,selected==='portal'?'↩':'S','#c3efa5');pad(s.goal,'G','#ffcf76')
-  const a=ability()
+  pad(s.start,selected==='portal'?'↩':'S','#dbdfb0');pad(s.goal,'G','#f8d294')
+  const a=s.abilities.find(i=>i.id===selected)!
   for(const obj of s.objects){
     const x=obj.x*tile,y=obj.y*tile
     if(a.radius){ctx.beginPath();ctx.arc(x,y,a.radius*tile,0,Math.PI*2);ctx.fillStyle='#7350b24a';ctx.fill()}
@@ -164,19 +202,20 @@ function draw(){
     box(x-40,y+40,80*obj.remainingMs/a.duration,6,'#f5e6b7')
   }
   if(s.beacon)ctx.drawImage(icon(a.id),s.beacon.x*tile-40,s.beacon.y*tile-40,80,80)
-  const fraction=Math.min(1,(performance.now()-received)/160),setup=choosing&&s.status!=='running'
-  const p=setup?s.start:s.npc
-  const x=Math.round(tile*(previousNpc&&!setup?previousNpc.x+(p.x-previousNpc.x)*fraction:p.x))
-  const y=Math.round(tile*(previousNpc&&!setup?previousNpc.y+(p.y-previousNpc.y)*fraction:p.y))
-  box(x-32,y+38,64,6,'#718c70');ctx.drawImage(cat(setup?look.idleFace:s.face,setup?look.bodyColor:s.appearance.bodyColor),x-48,y-48,96,96)
+  const fraction=Math.min(1,(performance.now()-received)/160)
+  const p=s.npc
+  const x=Math.round(tile*(previousNpc?previousNpc.x+(p.x-previousNpc.x)*fraction:p.x))
+  const y=Math.round(tile*(previousNpc?previousNpc.y+(p.y-previousNpc.y)*fraction:p.y))
+  box(x-32,y+38,64,6,'#718c70');ctx.drawImage(cat(s.face,coats[s.skin]?.color??s.appearance.bodyColor,s.skin),x-48,y-48,96,96)
+  if(mark && performance.now()-mark.at<520){
+    ctx.save();ctx.globalAlpha=1-(performance.now()-mark.at)/520
+    ctx.strokeStyle='#b64b36';ctx.lineWidth=6;ctx.beginPath()
+    const x=mark.x*tile,y=mark.y*tile
+    ctx.moveTo(x-23,y-16);ctx.lineTo(x+15,y+21);ctx.moveTo(x-18,y+20);ctx.lineTo(x+24,y-21);ctx.stroke();ctx.restore()
+  }
   if(s.status==='running'&&cursor){
     ctx.strokeStyle='#fff8ce';ctx.lineWidth=4
     if(a.target==='cell')ctx.strokeRect(Math.floor(cursor.x)*tile+2,Math.floor(cursor.y)*tile+2,124,124)
     else{ctx.beginPath();ctx.arc(cursor.x*tile,cursor.y*tile,a.radius*tile,0,Math.PI*2);ctx.stroke()}
   }
 }
-async function poll(){
-  if(!sending)await request()
-  window.setTimeout(poll,200)
-}
-void poll();draw()

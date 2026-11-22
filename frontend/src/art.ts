@@ -40,16 +40,27 @@ const faces:Record<string,[string,string,string]>={
   ice:['low','wide','O'],gate:['low','low','line'],decoy_goal:['star','star','v'],
   lure:['big','big','o'],portal:['wide','wide','O'],pulse:['flat','flat','o']
 }
-export function cat(face:string,color:string){
-  return sprite('cat'+face+color,(c,px)=>{
+export function cat(face:string,color:string,skin='snow'){
+  return sprite('cat'+face+color+skin,(c,px)=>{
     const rgb=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16))
     const shade='rgb('+rgb.map((n,i)=>Math.round(n*(i===2?.92:.77))).join(',')+')'
     for(let y=0;y<32;y++) for(const x of body[y]){
       const border=!body[y-1]?.has(x)||!body[y+1]?.has(x)||!body[y].has(x-1)||!body[y].has(x+1)
       c.fillStyle=border?'#302535':(!body[y+2]?.has(x)||y===20||x>24)?shade:color;px(x,y)
+      if(!border){
+        if(skin==='tabby' && ((y>5 && y<10 && [12,15,19].includes(x)) || (y>21 && y<27 && x<14 && y%3===0))) {
+          c.fillStyle='#885B43';px(x,y)
+        }
+        if(skin==='tux' && ((y>20 && Math.abs(x-15)<(29-y)*.6) || (y>14 && Math.abs(x-15)<4))){
+          c.fillStyle='#F8EFDC';px(x,y)
+        }
+        if(skin==='calico' && ((x<12&&y<11)||(x>20&&y>21)||(x>21&&y<8))){
+          c.fillStyle=x<12?'#BC8051':'#5B5454';px(x,y)
+        }
+      }
     }
     c.fillStyle=shade;px(8,6,2,1);px(22,6,2,1)
-    c.fillStyle=rgb[0]*.3+rgb[1]*.59+rgb[2]*.11<85?'#fffbe8':'#302535'
+    c.fillStyle=skin==='tux'||rgb[0]*.3+rgb[1]*.59+rgb[2]*.11<85?'#fffbe8':'#302535'
     const [a,b,m]=faces[face]??faces.calm
     function stamp(rows:string[],x:number,y:number,mirror=false){
       rows.forEach((row,j)=>[...row].forEach((p,i)=>{if(p==='1')px(x+(mirror?row.length-1-i:i),y+j)}))
@@ -59,6 +70,7 @@ export function cat(face:string,color:string){
     if(face==='fierce'){px(10,9,2);px(19,10,2)}
     const mouth:Record<string,string[]>={w:['10001','10101','01010'],v:['10001','01110'],
       f:['01110','10001'],line:['11111'],o:['0110','0110'],O:['01110','11111','01110']}
+    if(skin==='tux') c.fillStyle='#302535'
     stamp(mouth[m],13,15)
   })
 }
