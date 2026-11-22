@@ -83,15 +83,20 @@ public:
                 if(!id.isString() || indexOf(id.asString())<0 || !ids.insert(id.asString()).second)
                     throw std::runtime_error("Invalid saved ability");
             }
-            if(!ids.contains("wall") || !profile["clearsSinceUnlock"].isUInt() ||
+            if(ids.empty() || !profile["clearsSinceUnlock"].isUInt() ||
                profile["clearsSinceUnlock"].asUInt()>=ids.size()) throw std::runtime_error("Invalid saved progress");
         } else {
-            profile["version"]=1; profile["owned"].append("wall");profile["clearsSinceUnlock"]=0;
+            JsonValue initial;
+            auto starter=std::uniform_int_distribution<size_t>(0,book.size()-1)(game.rng);
+            initial["version"]=1; initial["owned"].append(book[starter].id);
+            initial["clearsSinceUnlock"]=0; initial["appearance"]=look;
+            save(initial);
         }
         if(!profile.isMember("appearance")) profile["appearance"]=look;
         if(!validLook(profile["appearance"])) throw std::runtime_error("Invalid saved appearance");
-        auto id=profile.get("lastAbility","wall").asString();
-        if(owned(id)) game.kind=Kind(indexOf(id));
+        auto first=profile["owned"][0].asString();
+        auto id=profile.get("lastAbility",first).asString();
+        game.kind=Kind(indexOf(owned(id)?id:first));
     }
     void sync(){
         if(game.status=="running"){
@@ -137,7 +142,7 @@ public:
         }
         if(name=="start"){
             if(game.status=="running") throw RequestError{409,"プレイ中です"};
-            auto id=body.get("abilityId","wall");
+            auto id=body.get("abilityId",profile["owned"][0]);
             if(!id.isString()) throw RequestError{400,"能力IDを指定してください"};
             if(!owned(id.asString())) throw RequestError{409,"未解放の能力です"};
             auto look=body.get("appearance",profile["appearance"]);
