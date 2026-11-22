@@ -1,9 +1,9 @@
 import './style.css'
 import {cat,icon} from './art'
 
-type Point={x:number;y:number}
-type Ability={id:string;name:string;desc:string;cd:number;radius:number;duration:number;target:'cell'|'circle'}
-type State={
+export type Point={x:number;y:number}
+export type Ability={id:string;name:string;desc:string;cd:number;radius:number;duration:number;target:'cell'|'circle'}
+export type State={
   status:'ready'|'running'|'clear'|'lost';roundId:string;remainingMs:number;timeLimitMs:number
   width:number;height:number;map:string[];npc:Point;goal:Point;start:Point;face:string;beacon?:Point&{remainingMs:number}
   objects:(Point & {closed:boolean;remainingMs:number})[];appearance:{bodyColor:string;idleFace:string};abilities:Ability[];owned:string[]
@@ -38,6 +38,10 @@ document.querySelector('#app')!.innerHTML=`
 <canvas id="map" width="1408" height="896" aria-label="石垣の庭。クリックで能力を発動"></canvas>
 <div class="sticky"><canvas id="active-icon" width="32" height="32"></canvas><b id="ability-name"></b><span id="charge"></span></div></section>
 <div id="notice" role="status"></div></main>`
+const pagesBeta=import.meta.env.MODE==='pages'
+if(pagesBeta){
+  for(const link of document.querySelectorAll('[data-page="ranking"],[data-page="feedback"]'))link.remove()
+}
 function el<T extends HTMLElement=HTMLElement>(id:string){return document.getElementById(id) as T}
 const canvas=el<HTMLCanvasElement>('map'),ctx=canvas.getContext('2d')!,tile=128
 let s:State|null=null,page:Page='home',selected='wall',sending=false,sequence=0,lastApplied=0
@@ -116,6 +120,7 @@ function show(next:Page){
   }
 }
 async function api(name:string,body?:unknown){
+  if(pagesBeta)return (await import('./browser-game')).request(name,body)
   const res=await fetch('/api/'+name,body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
   const data=await res.json()
   if(!res.ok)throw Error(data.error??'通信に失敗しました')
@@ -138,7 +143,7 @@ async function request(name='state',body?:unknown){
       paint(el('active-icon'),icon(a.id));el('ability-name').textContent=a.name
       el('charge').textContent=next.cooldownRemainingMs?'あと '+(next.cooldownRemainingMs/1000).toFixed(1)+'秒':'使用可'
     } else if(prev?.status==='running')show(next.status==='ready'?'home':'result')
-    else if(!prev)show(location.hash.startsWith('#rank')?'ranking':page)
+    else if(!prev)show(!pagesBeta && location.hash.startsWith('#rank')?'ranking':page)
     else if(prev.skin!==next.skin || prev.appearance.idleFace!==next.appearance.idleFace){
       if(page==='skins' || page==='home')show(page)
     }

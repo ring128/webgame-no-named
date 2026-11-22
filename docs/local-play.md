@@ -49,3 +49,15 @@ bash play.sh
 ブラウザは登録したURIと同じホスト名の `http://localhost:8848/` で開き、「ランキング」→「Googleでログイン」を選ぶ。Googleを設定する前でもステージを遊べる。
 
 ステージの検証は `ctest --test-dir backend/build/local --output-on-failure`。能力ごとの単独クリア時のシード・時刻・クリック座標は `backend/build/local/stage_test` の出力で確認できる。
+
+## GitHub Pagesのβ版
+
+`npm --prefix frontend run build:pages` で静的ファイルを `frontend/dist-pages/` に生成する。このフォルダの内容を `gh-pages` ブランチのルートに配置する。β版は同梱のWebAssemblyでステージを進行し、スキンと解放済み能力をブラウザのlocalStorageに保存する。ゲームAPIへの通信は行わない。
+
+`backend/stage.cpp` や `stage.h` を変更したら、Ubuntu 24.04で以下を実行してからβ版をビルドする。
+
+```sh
+sudo apt install clang-18 lld-18 wasi-libc libc++-18-dev-wasm32 libc++abi-18-dev-wasm32 libclang-rt-18-dev-wasm32
+bash backend/build-browser.sh
+npm --prefix frontend run build:pages
+```
