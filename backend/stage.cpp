@@ -260,6 +260,21 @@ void Stage::step(){
     while(history.front().time<time-8000) history.pop_front();
     if(time>=limit && status=="running") status="clear";
 }
+int Stage::unimpededMs() const {
+    if(cell(pos)==cell(goal)) return 0;
+    // Simulate a fresh walker from the exact finish position. Goal entry and
+    // corner collision then match the live game, including a diagonal first leg.
+    Stage walker(1);
+    walker.pos=pos;
+    walker.status="running";
+    walker.plan();
+    int elapsed=0;
+    while(walker.status=="running" && !walker.route.empty()){
+        walker.walk(speed*tick/1000.);
+        elapsed+=tick;
+    }
+    return elapsed;
+}
 std::string Stage::use(Vec click){
     if(status!="running") return "ゲームを開始してください";
     if(!inside(click)) return "盤面の中を選んでください";

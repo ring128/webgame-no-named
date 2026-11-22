@@ -73,6 +73,12 @@ int main(){
     Stage idle(1); idle.begin(Wall);
     while(idle.status=="running") idle.step();
     if(idle.status!="lost") return 1;
+    Stage probe(2);probe.begin(Stop);
+    probe.objects.push_back({probe.pos,0,3000});probe.stopped=12000;
+    require(probe.unimpededMs()==idle.time,"score matches actual no-interference run");
+    probe.pos={9.5,2.75};
+    require(probe.unimpededMs()==320,"score counts continuous distance to goal entry");
+    probe.pos=goal;require(probe.unimpededMs()==0,"already inside goal");
     std::cout<<"idle: goal at "<<idle.time<<" ms\n";
     for(int k=0;k<int(book.size());++k){
         bool won=false;

@@ -1,4 +1,6 @@
 #include "stage.h"
+#include "google_login.h"
+#include "ranking.h"
 #include <drogon/drogon.h>
 #include <chrono>
 #include <filesystem>
@@ -15,6 +17,9 @@ using JsonValue=Json::Value;
 namespace {
 const std::set<std::string> faces{"fierce","wink","happy","calm","brow","sleepy"};
 const std::regex hexColor("#[0-9a-fA-F]{6}");
+const std::map<std::string,std::string> coats{
+    {"snow","#F8F1DD"},{"tabby","#DAA46F"},{"tux","#534E52"},{"calico","#F8EACF"}
+};
 int indexOf(const std::string& id){
     for(size_t i=0;i<book.size();++i) if(id==book[i].id) return int(i);
     return -1;
@@ -31,6 +36,8 @@ class GameSession {
     fs::path file="data/progress.json";
     Clock::time_point epoch;
     std::string round, unlocked;
+    std::string roundBrowser, roundUser;
+    int scoreMs=0;
     bool owned(const std::string& id) const{
         return std::find(profile["owned"].begin(),profile["owned"].end(),JsonValue(id))!=profile["owned"].end();
     }
@@ -46,6 +53,10 @@ class GameSession {
         if(profile["lastRewardRound"]==round) return;
         if(pending.isNull()){
             pending=profile;
+            scoreMs=game.unimpededMs();
+            JsonValue entry;entry["ms"]=scoreMs;entry["ability"]=book[game.kind].name;
+            if(roundUser.empty()) ranking::record(pending["guestBests"],roundBrowser,entry);
+            else ranking::record(pending["rankBests"],roundUser,entry);
             std::vector<std::string> remaining;
             for(auto& a:book) if(!owned(a.id)) remaining.emplace_back(a.id);
             if(!remaining.empty()){
@@ -88,10 +99,40 @@ public:
         }
         if(game.status=="clear") award();
     }
-    void action(const std::string& name,const JsonValue& body){
+    JsonValue ranking(const std::string& browser,const std::string& user){
+        if(user.empty()) throw RequestError{401,"ランキングにはGoogleログインが必要です"};
+        sync();
+        if(profile["guestBests"].isMember(browser)){
+            auto next=profile;
+            ranking::claim(next,browser,user);
+            save(next);
+        }
+        JsonValue result;
+        result["rows"]=ranking::standings(profile["rankBests"],user);
+        return result;
+    }
+    void action(const std::string& name,const JsonValue& body,const std::string& browser,const std::string& user){
         sync();
         if(name=="state") return;
         if(!body.isObject()) throw RequestError{400,"操作の形式が正しくありません"};
+        if(name=="feedback"){
+            if(!body["text"].isString()) throw RequestError{400,"意見を入力してください"};
+            auto message=body["text"].asString();
+            if(message.find_first_not_of(" \r\n\t")==std::string::npos || message.size()>4000)
+                throw RequestError{400,"意見は1〜1000文字で入力してください"};
+            fs::create_directories(file.parent_path());
+            std::ofstream out("data/feedback.jsonl",std::ios::app);
+            out.exceptions(std::ios::failbit|std::ios::badbit);
+            Json::StreamWriterBuilder writer;writer["indentation"]="";
+            JsonValue line;line["text"]=message;out<<Json::writeString(writer,line)<<'\n';out.close();return;
+        }
+        if(name=="skin"){
+            if(game.status=="running") throw RequestError{409,"プレイ中です"};
+            auto id=body.get("skin","");
+            if(!id.isString() || !coats.contains(id.asString())) throw RequestError{400,"スキンを選んでください"};
+            auto next=profile;next["skin"]=id;next["appearance"]["idleFace"]="calm";
+            next["appearance"]["bodyColor"]=coats.at(id.asString());save(next);return;
+        }
         if(name=="start"){
             if(game.status=="running") throw RequestError{409,"プレイ中です"};
             auto id=body.get("abilityId","wall");
@@ -102,8 +143,10 @@ public:
             auto next=profile; next["appearance"]=look; next["lastAbility"]=id;
             if(next!=profile) save(next);
             round=drogon::utils::getUuid(); unlocked.clear();
+            roundBrowser=browser;roundUser=user;scoreMs=0;
             game.begin(Kind(indexOf(id.asString()))); epoch=Clock::now(); return;
         }
+        if(browser!=roundBrowser) throw RequestError{409,"開始したブラウザで操作してください"};
         if(name!="block" && body["roundId"]!=round) throw RequestError{409,"ラウンドが切り替わりました"};
         if(name=="retire"){
             if(game.status=="running") game.status="ready";
@@ -133,6 +176,7 @@ public:
         for(auto row:map) v["map"].append(row);
         v["start"]=point(start);v["goal"]=point(goal);v["npc"]=point(game.pos);
         auto look=profile["appearance"];v["appearance"]=look;
+        v["skin"]=profile.get("skin","snow");v["scoreMs"]=scoreMs;
         v["face"]=game.face(look["idleFace"].asString());
         v["timeLimitMs"]=limit;v["remainingMs"]=limit-game.time;
         v["cooldownRemainingMs"]=std::max(0,game.cooldown-game.time);
@@ -153,10 +197,17 @@ int main(int argc,char** argv){
     if(!fs::is_regular_file(root/"index.html")){
         std::cerr<<"Build the frontend first, then pass the dist directory.\n";return 1;
     }
-    for(std::string name:{"state","start","use","block","retire"}){
+    const int port=argc>2?std::stoi(argv[2]):8848;
+    app().enableSession(86400*7,Cookie::SameSite::kLax);
+    google_login::routes(port);
+    for(std::string name:{"state","start","use","block","retire","ranking","feedback","skin","logout"}){
         app().registerHandler("/api/"+name,[&,name](const HttpRequestPtr& req,
                 std::function<void(const HttpResponsePtr&)>&& callback){
             int status=200;JsonValue result;
+            std::string browser=req->getCookie("notebook_player");
+            bool issueCookie=name=="logout" || browser.size()!=32 ||
+                browser.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos;
+            if(issueCookie) browser=utils::getUuid();
             {
                 std::lock_guard lock(gate);
                 try{
@@ -166,19 +217,31 @@ int main(int argc,char** argv){
                         if(!json) throw RequestError{400,"JSONを確認してください"};
                         body=*json;
                     }
-                    session.action(name,body);
-                    result=session.state();
+                    auto auth=req->session();
+                    if(name=="logout"){auth->erase("googleSub");auth->changeSessionIdToClient();}
+                    auto user=auth->get<std::string>("googleSub");
+                    if(name=="ranking") result=session.ranking(browser,user);
+                    else{
+                        if(name!="logout") session.action(name,body,browser,user);
+                        result=session.state();
+                    }
+                    result["signedIn"]=!user.empty();result["loginConfigured"]=google_login::configured();
                 }catch(const RequestError& e){
-                    status=e.status; result=session.state();result["error"]=e.message;
+                    status=e.status; result["error"]=e.message;
                 }catch(const std::exception& e){
                     status=503;LOG_ERROR<<e.what();result["error"]="進捗を保存できません。保存先を確認してください";
                 }
             }
             auto resp=HttpResponse::newHttpJsonResponse(result);
+            if(issueCookie){
+                Cookie cookie("notebook_player",browser);
+                cookie.setHttpOnly(true);cookie.setSameSite(Cookie::SameSite::kLax);
+                cookie.setPath("/");cookie.setMaxAge(365*86400);resp->addCookie(cookie);
+            }
             resp->setStatusCode(static_cast<HttpStatusCode>(status));
             resp->addHeader("Cache-Control","no-store");callback(resp);
-        },{name=="state"?Get:Post});
+        },{name=="state" || name=="ranking"?Get:Post});
     }
     app().setUploadPath("data/uploads").setDocumentRoot(fs::absolute(root).string())
-         .addListener("127.0.0.1",argc>2?std::stoi(argv[2]):8848).run();
+         .addListener("127.0.0.1",port).run();
 }

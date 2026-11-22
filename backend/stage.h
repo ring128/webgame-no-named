@@ -68,6 +68,7 @@ struct Stage {
 
     void begin(Kind k);
     void step();
+    int unimpededMs() const;
     std::string use(Vec click);
     std::string face(const std::string& idle) const;
     bool closed(const Object& ob,int at) const;
