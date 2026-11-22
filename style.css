@@ -1,0 +1,18 @@
+:root{color-scheme:light;color:#303e42;background:#f8f4e6;font-family:"Yu Gothic",Meiryo,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;border-top:5px solid #303e42}
+main{max-width:1000px;margin:auto;padding:clamp(16px,3vw,32px)}
+header{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+h1{font-family:"Yu Mincho",serif;font-size:clamp(2.25rem,6vw,3.75rem);letter-spacing:-.08em;line-height:1.15;margin:0}
+h1 span{color:#a54837}
+p,figcaption{line-height:1.7}
+header a{color:inherit;white-space:nowrap;text-underline-offset:.25em}
+nav{display:flex;flex-wrap:wrap;gap:.35rem;margin:.65rem 0 1rem;border-top:2px solid;padding-top:.75rem}
+nav a{color:inherit;padding:.45rem .75rem;text-decoration:none;border:1px solid transparent}
+nav a[aria-current=true]{background:#f2db97;border-color:#303e42;font-weight:bold}
+a:focus-visible,video:focus-visible{outline:3px solid #a54837;outline-offset:2px}
+figure{margin:0 0 1rem}
+img,video{display:block;width:100%;height:auto;max-height:69vh;object-fit:contain;border:1px solid #777969;background:#e2ddcd}
+video{aspect-ratio:3/2}
+figcaption{margin:.55rem 0;font-size:.95rem}
+@media(max-width:580px){header{display:block}header p{margin:.6rem 0}header a,nav{font-size:.9rem}nav a{padding:.45rem .55rem}}
