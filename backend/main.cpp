@@ -1,4 +1,5 @@
 #include "stage.h"
+#include "feedback.h"
 #include "google_login.h"
 #include "ranking.h"
 #include <drogon/drogon.h>
@@ -115,17 +116,6 @@ public:
         sync();
         if(name=="state") return;
         if(!body.isObject()) throw RequestError{400,"操作の形式が正しくありません"};
-        if(name=="feedback"){
-            if(!body["text"].isString()) throw RequestError{400,"意見を入力してください"};
-            auto message=body["text"].asString();
-            if(message.find_first_not_of(" \r\n\t")==std::string::npos || message.size()>4000)
-                throw RequestError{400,"意見は1〜1000文字で入力してください"};
-            fs::create_directories(file.parent_path());
-            std::ofstream out("data/feedback.jsonl",std::ios::app);
-            out.exceptions(std::ios::failbit|std::ios::badbit);
-            Json::StreamWriterBuilder writer;writer["indentation"]="";
-            JsonValue line;line["text"]=message;out<<Json::writeString(writer,line)<<'\n';out.close();return;
-        }
         if(name=="skin"){
             if(game.status=="running") throw RequestError{409,"プレイ中です"};
             if(!body.isMember("skin") && !body.isMember("idleFace"))
@@ -214,6 +204,8 @@ int main(int argc,char** argv){
     }
     const int port=argc>2?std::stoi(argv[2]):8848;
     app().enableSession(86400*7,Cookie::SameSite::kLax);
+    feedback::initialize();
+    feedback::registerAdmin();
     google_login::routes(port);
     for(std::string name:{"state","start","use","block","retire","ranking","feedback","skin","logout"}){
         app().registerHandler("/api/"+name,[&,name](const HttpRequestPtr& req,
@@ -223,6 +215,10 @@ int main(int argc,char** argv){
             bool issueCookie=name=="logout" || browser.size()!=32 ||
                 browser.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos;
             if(issueCookie) browser=utils::getUuid();
+            auto feedbackId=req->getCookie("feedback_id");
+            bool newAuthor=name=="feedback" && (feedbackId.size()!=32 ||
+                feedbackId.find_first_not_of("0123456789abcdefABCDEF")!=std::string::npos);
+            if(newAuthor) feedbackId=utils::getSha256("feedback cookie:"+browser).substr(0,32);
             {
                 std::lock_guard lock(gate);
                 try{
@@ -237,7 +233,16 @@ int main(int argc,char** argv){
                     auto user=auth->get<std::string>("googleSub");
                     if(name=="ranking") result=session.ranking(browser,user);
                     else{
-                        if(name!="logout") session.action(name,body,browser,user);
+                        if(name=="feedback"){
+                            if(!body.isObject() || !body["text"].isString()) throw RequestError{400,"意見を入力してください"};
+                            auto message=body["text"].asString();
+                            auto chars=std::count_if(message.begin(),message.end(),[](unsigned char c){return (c&0xc0)!=0x80;});
+                            if(message.find_first_not_of(" \r\n\t")==std::string::npos || chars>1000 || message.size()>4000)
+                                throw RequestError{400,"意見は1〜1000文字で入力してください"};
+                            session.sync();
+                            if(!feedback::submit(utils::getSha256("feedback:"+feedbackId).substr(0,32),message))
+                                throw RequestError{403,"この投稿者からの意見は受け付けていません"};
+                        }else if(name!="logout") session.action(name,body,browser,user);
                         result=session.state();
                     }
                     result["signedIn"]=!user.empty();result["loginConfigured"]=google_login::configured();
@@ -252,6 +257,11 @@ int main(int argc,char** argv){
                 Cookie cookie("notebook_player",browser);
                 cookie.setHttpOnly(true);cookie.setSameSite(Cookie::SameSite::kLax);
                 cookie.setPath("/");cookie.setMaxAge(365*86400);resp->addCookie(cookie);
+            }
+            if(newAuthor){
+                Cookie cookie("feedback_id",feedbackId);
+                cookie.setHttpOnly(true);cookie.setSameSite(Cookie::SameSite::kLax);
+                cookie.setPath("/api/feedback");cookie.setMaxAge(365*86400);resp->addCookie(cookie);
             }
             resp->setStatusCode(static_cast<HttpStatusCode>(status));
             resp->addHeader("Cache-Control","no-store");callback(resp);

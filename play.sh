@@ -20,5 +20,15 @@ if [[ -d "$dep/include/drogon" ]]; then
 fi
 cmake -S backend -B backend/build/local "${args[@]}" -Wno-dev
 cmake --build backend/build/local -j2
+mkdir -p data
+if [[ ! -e data/feedback-admin.key ]]; then
+  key_tmp=$(mktemp data/.feedback-admin.XXXXXX)
+  trap 'rm -f -- "$key_tmp"' EXIT
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$key_tmp"
+  echo >> "$key_tmp"
+  ln "$key_tmp" data/feedback-admin.key || [[ -f data/feedback-admin.key ]]
+  rm -f -- "$key_tmp"
+  trap - EXIT
+fi
 echo "ブラウザで http://localhost:8848/ を開いてください。終了は Ctrl+C"
 exec backend/build/local/game_server frontend/dist
