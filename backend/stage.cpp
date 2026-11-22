@@ -64,8 +64,18 @@ double Stage::travel(Vec a,Vec b,double at) const {
             double mid=dot(rel,u), sq=book[kind].radius*book[kind].radius-dot(rel,rel)+mid*mid;
             if(sq<=0) continue;
             double lo=std::max(0.,mid-std::sqrt(sq)), hi=std::min(len,mid+std::sqrt(sq));
-            if(hi>lo && at+lo*1000/speed<ob.end)
+            if(hi<=lo || at+lo*1000/speed>=ob.end) continue;
+            if(kind==Field){
                 slow.emplace_back(lo,std::min(hi,lo+(ob.end-at-lo*1000/speed)*speed/2000));
+            } else {
+                // Estimate lost forward progress at scheduled pulls on this leg.
+                for(int pulse=ob.born+1000;pulse<=ob.end;pulse+=1000){
+                    double along=(pulse-at)*speed/1000.;
+                    if(along<lo || along>hi) continue;
+                    Vec pull=ob.pos-(a+u*along);
+                    elapsed+=std::max(0.,-dot(unit(pull),u))*std::min(1.,pull.length())*1000/speed;
+                }
+            }
         }
         if(cell(a)==cell(b) || cell(b)!=cell(ob.pos)) continue;
         double entry=at+base*crossing(a,b);
@@ -87,35 +97,55 @@ void Stage::plan(bool forced) {
         return f==n.f?tie<n.tie:f>n.f;
     }};
     std::priority_queue<Node> open;
-    std::array<double,W*H> best; best.fill(1e12);
-    std::array<int,W*H> parent; parent.fill(-1);
-    auto offer=[&](int id,int prev,double cost){
+    // Direction is part of the node only on ice: arriving from the west and
+    // arriving from the north can have different legal next steps.
+    constexpr int count=W*H;
+    std::array<double,5*count> best; best.fill(1e12);
+    std::array<int,5*count> parent; parent.fill(-1);
+    auto iceDirection=[&](Vec p,Vec dir,double at){
+        if(kind==Ice && floorAt(p+dir)) for(const auto& ob:objects)
+            if(cell(p)==cell(ob.pos) && at<ob.end)
+                for(size_t i=0;i<directions.size();++i)
+                    if((dir-directions[i]).length()<eps) return int(i)+1;
+        return 0;
+    };
+    auto offer=[&](int tile,int prev,double cost,int iceDir=0){
+        int id=tile+count*iceDir;
         if(cost>=best[id]-eps) return;
         best[id]=cost; parent[id]=prev;
-        Vec d=center(id)-center(cell(target));
+        Vec d=center(tile)-center(cell(target));
         open.push({cost+(std::abs(d.x)+std::abs(d.y))*1000/speed,cost,id,static_cast<unsigned>(rng())});
     };
     int here=cell(pos), dest=cell(target);
     Vec origin=center(here), off=pos-origin;
     if(off.length()<eps) offer(here,-1,time);
     else {
-        auto seed=[&](Vec p){ if(floorAt(p)) offer(cell(p),-1,time+travel(pos,p,time)); };
+        auto seed=[&](Vec p){
+            if(!floorAt(p)) return;
+            double arrival=time+travel(pos,p,time);
+            offer(cell(p),-1,arrival,iceDirection(p,unit(p-pos),arrival));
+        };
         seed(origin);
         for(auto d:directions)
             if((std::abs(off.x)>eps && std::abs(off.y)>eps) || dot(off,d)>eps)
                 seed(origin+d);
     }
+    int finish=-1;
     while(!open.empty()){
         auto n=open.top(); open.pop();
         if(n.g!=best[n.id]) continue;
-        if(n.id==dest) break;
-        auto p=center(n.id);
-        for(auto d:directions) if(floorAt(p+d))
-            offer(cell(p+d),n.id,n.g+travel(p,p+d,n.g));
+        if(n.id%count==dest){finish=n.id;break;}
+        auto p=center(n.id%count);
+        for(auto d:directions){
+            if(n.id>=count && directions[n.id/count-1]!=d) continue;
+            if(!floorAt(p+d)) continue;
+            double arrival=n.g+travel(p,p+d,n.g);
+            offer(cell(p+d),n.id,arrival,iceDirection(p+d,d,arrival));
+        }
     }
     std::deque<Vec> fresh;
-    if(best[dest]<1e12){
-        for(int i=dest;i>=0;i=parent[i]) fresh.push_front(center(i));
+    if(finish>=0){
+        for(int i=finish;i>=0;i=parent[i]) fresh.push_front(center(i%count));
         if(!fresh.empty() && (fresh.front()-pos).length()<eps) fresh.pop_front();
         if(target!=center(dest)) fresh.push_back(target);
     }
@@ -123,8 +153,15 @@ void Stage::plan(bool forced) {
     if(!route.empty() && !forced && route.back()==target){
         double oldTime=time;
         Vec prev=pos;
-        for(auto p:route){ oldTime+=travel(prev,p,oldTime); prev=p; }
-        if(oldTime<=best[dest]+(paused>time?0:100)+eps) return;
+        int iceDir=0;
+        for(auto p:route){
+            Vec dir=unit(p-prev);
+            if(iceDir && dir!=directions[iceDir-1]) {oldTime=1e12;break;}
+            oldTime+=travel(prev,p,oldTime);
+            iceDir=iceDirection(p,dir,oldTime);
+            prev=p;
+        }
+        if(finish>=0 && oldTime<=best[finish]+(paused>time?0:100)+eps) return;
     }
     if(!route.empty() || forced){
         if(time>=paused) paused=time+100;
@@ -148,7 +185,7 @@ void Stage::moved(Vec next) {
             stopped=time+3000; ob.end=time; react(3000); return;
         case Sticky:
             sticky=time+3000; react(3000); return;
-        case Ice: slideDir=heading; return;
+        case Ice: slideDir=heading; react(); return;
         default: break;
         }
     }
@@ -201,7 +238,7 @@ void Stage::step(){
     if(std::erase_if(objects,[&](auto& o){return time>=o.end;}) && kind!=Portal) dirty=true;
     if(targetEnd && time>=targetEnd){targetEnd=0; target=goal; dirty=true;}
     if(dirty) plan();
-    if(time>=paused && time>=stopped && status=="running"){
+    if(time>paused && time>stopped && status=="running"){
         if(reversing){
             double budget=speed*tick/1000.;
             while(time<reversing && !backwards.empty() && budget>eps){
@@ -242,7 +279,7 @@ std::string Stage::use(Vec click){
         if(kind!=Portal) plan();
         return {};
     }
-    react(a.duration);
+    react(kind==Rewind?800:a.duration);
     if(kind==Stop) stopped=time+a.duration;
     if(kind==Pulse || kind==Knock || kind==Pull){
         Vec dir=delta.length()>eps?unit(delta):heading;

@@ -1,8 +1,41 @@
 #include "stage.h"
 #include <cstdlib>
 #include <iostream>
+#include <set>
 
 using namespace stage;
+void require(bool value,const char* condition){
+    if(!value){std::cerr<<"Failed: "<<condition<<"\n";std::exit(1);}
+}
+void interactionChecks(){
+    std::set<int> exits;
+    for(unsigned seed=0;seed<32;++seed){
+        Stage g(seed); g.begin(Portal);
+        auto route=g.route;
+        exits.insert(cell(route.front()));
+        auto entrance=route[1];
+        require(g.use(entrance).empty() && g.route==route,"portal preserves route");
+        while(g.time<6000 && g.segment==0) g.step();
+        require(g.segment==1 && g.pos==start && !g.route.empty(),"portal replans from exit");
+    }
+    require(exits.size()>1,"equal initial routes vary with random seed");
+    Stage g(1);g.begin(Wall);
+    for(int i=0;i<12;i++) g.step();
+    Vec pos=g.pos;Vec before=g.route.front();
+    require(g.use(before).empty() && g.route.front()!=before,"mid-edge reroute");
+    for(int i=0;i<5;i++){g.step();require(g.pos==pos,"100ms turn pause");}
+    g.step();require(g.pos!=pos,"walk after turn pause");
+    g.begin(Knock);
+    require(g.use({10.5,6.5}).empty() && g.cooldown==2000,"miss refunds half of cooldown");
+    g.begin(Knock);
+    require(g.use({.6,3.5}).empty(),"hit");
+    require(g.pos.x<2 && g.pos.x>1.97 && g.cooldown==4000,"push stops at wall");
+    require(g.face("sleepy")=="knockback" && g.face("happy")=="knockback","shared hit face");
+    g.begin(Gate);
+    require(g.use({1.5,2.5}).empty(),"gate placement");
+    auto gate=g.objects.front();
+    require(g.closed(gate,1999) && !g.closed(gate,2000) && g.closed(gate,4000) && !g.closed(gate,8000),"gate cycle");
+}
 // Deterministic replay: the same inputs go through the live game's use/step methods.
 bool play(Kind kind,unsigned seed,std::vector<std::pair<int,Vec>>& inputs) {
     Stage game(seed);
@@ -36,6 +69,7 @@ bool play(Kind kind,unsigned seed,std::vector<std::pair<int,Vec>>& inputs) {
     return game.status=="clear";
 }
 int main(){
+    interactionChecks();
     Stage idle(1); idle.begin(Wall);
     while(idle.status=="running") idle.step();
     if(idle.status!="lost") return 1;
