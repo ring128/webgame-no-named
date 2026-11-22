@@ -20,7 +20,7 @@ document.querySelector('#app')!.innerHTML=`
 <main class="notebook">
 <div class="rings" aria-hidden="true"></div>
 <div id="sheet">
-  <nav id="nav"><button id="back">← 戻る</button><span>作戦ノート</span></nav>
+  <nav id="nav"><button id="back">← 戻る</button></nav>
   <section id="home" hidden><div class="cover">
     <div class="cover-art"><canvas id="cover-cat" width="32" height="32" aria-hidden="true"></canvas><i></i></div>
     <h1>道をふさげ<span>。</span></h1><p>猫のゴールを阻止せよ。</p></div>

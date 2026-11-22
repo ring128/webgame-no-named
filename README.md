@@ -18,7 +18,7 @@
 - CMake（ビルド用）、CTest（ゲームとランキングのテスト用）
 - Drogon（フロントエンドの配信とHTTP API）
 - OpenID Connect（ランキング用のGoogleログイン）
-- JSON（進捗・スキン・ランキングの保存）、JSON Lines（意見の保存）
+- JSON（進捗・スキン・ランキングの保存）、SQLite（意見と投稿者ブロックの保存）
 
 ### 今後導入を検討
 
