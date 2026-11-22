@@ -5,7 +5,7 @@ type Point={x:number;y:number}
 type Ability={id:string;name:string;desc:string;cd:number;radius:number;duration:number;target:'cell'|'circle'}
 type State={
   status:'ready'|'running'|'clear'|'lost';roundId:string;remainingMs:number;timeLimitMs:number
-  width:number;height:number;map:string[];npc:Point;goal:Point;start:Point;face:string;beacon?:Point
+  width:number;height:number;map:string[];npc:Point;goal:Point;start:Point;face:string;beacon?:Point&{remainingMs:number}
   objects:(Point & {closed:boolean;remainingMs:number})[];appearance:{bodyColor:string;idleFace:string};abilities:Ability[];owned:string[]
   clearsSinceUnlock:number;nextUnlockAt:number|null;selectedAbilityId:string;unlocked:string;cooldownRemainingMs:number
   skin:string;scoreMs:number;signedIn:boolean;loginConfigured:boolean
@@ -197,6 +197,20 @@ function coords(e:PointerEvent|MouseEvent):Point{
   const r=canvas.getBoundingClientRect()
   return {x:(e.clientX-r.left)*canvas.width/r.width/tile,y:(e.clientY-r.top)*canvas.height/r.height/tile}
 }
+function drawTimedIcon(point:Point,ability:Ability,remainingMs:number,open=false){
+  const x=point.x*tile,y=point.y*tile
+  const fraction=Math.max(0,Math.min(1,remainingMs/ability.duration))
+  const top=-Math.PI/2
+  ctx.save()
+  ctx.beginPath();ctx.arc(x,y,49,0,2*Math.PI)
+  ctx.fillStyle='#49435b';ctx.fill()
+  ctx.lineWidth=8;ctx.strokeStyle='#807888';ctx.stroke()
+  ctx.beginPath();ctx.arc(x,y,49,top,top+2*Math.PI*fraction)
+  ctx.strokeStyle='#f5e6b7';ctx.stroke()
+  if(open)ctx.globalAlpha=.52
+  ctx.drawImage(icon(ability.id),x-35,y-35,70,70)
+  ctx.restore()
+}
 canvas.onpointermove=e=>cursor=coords(e);canvas.onpointerleave=()=>cursor=null
 canvas.onclick=e=>{
   if(s?.status==='running') void cast(coords(e))
@@ -223,14 +237,13 @@ function draw(){
   }
   pad(s.start,selected==='portal'?'↩':'S','#dbdfb0');pad(s.goal,'G','#f8d294')
   const a=s.abilities.find(i=>i.id===selected)!
+  const sinceUpdate=performance.now()-received
   for(const obj of s.objects){
     const x=obj.x*tile,y=obj.y*tile
     if(a.radius){ctx.beginPath();ctx.arc(x,y,a.radius*tile,0,Math.PI*2);ctx.fillStyle='#7350b24a';ctx.fill()}
-    ctx.globalAlpha=a.id==='gate'&&!obj.closed?.52:1
-    box(x-48,y-48,96,96,'#49435b');ctx.drawImage(icon(a.id),x-48,y-48,96,96);ctx.globalAlpha=1
-    box(x-40,y+40,80*obj.remainingMs/a.duration,6,'#f5e6b7')
+    drawTimedIcon(obj,a,obj.remainingMs-sinceUpdate,a.id==='gate'&&!obj.closed)
   }
-  if(s.beacon)ctx.drawImage(icon(a.id),s.beacon.x*tile-40,s.beacon.y*tile-40,80,80)
+  if(s.beacon)drawTimedIcon(s.beacon,a,s.beacon.remainingMs-sinceUpdate)
   const fraction=Math.min(1,(performance.now()-received)/160)
   const p=s.npc
   const x=Math.round(tile*(previousNpc?previousNpc.x+(p.x-previousNpc.x)*fraction:p.x))

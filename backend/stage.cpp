@@ -5,6 +5,7 @@
 namespace stage {
 namespace {
 constexpr double eps=1e-7;
+constexpr int vortexPeriod=1000;
 constexpr std::array<Vec,4> directions{{{1,0},{0,1},{-1,0},{0,-1}}};
 double dot(Vec a,Vec b) { return a.x*b.x+a.y*b.y; }
 Vec unit(Vec v) { return v.length()<eps ? Vec{0,0} : v*(1/v.length()); }
@@ -69,7 +70,8 @@ double Stage::travel(Vec a,Vec b,double at) const {
                 slow.emplace_back(lo,std::min(hi,lo+(ob.end-at-lo*1000/speed)*speed/2000));
             } else {
                 // Estimate lost forward progress at scheduled pulls on this leg.
-                for(int pulse=ob.born+1000;pulse<=ob.end;pulse+=1000){
+                for(int pulse=ob.born+vortexPeriod;pulse<ob.end;pulse+=vortexPeriod){
+                    if(pulse<=time) continue;
                     double along=(pulse-at)*speed/1000.;
                     if(along<lo || along>hi) continue;
                     Vec pull=ob.pos-(a+u*along);
@@ -199,6 +201,11 @@ void Stage::shift(Vec delta){
     }
     plan(true);
 }
+void Stage::pullVortex(Vec center){
+    Vec delta=center-pos;
+    shift(unit(delta)*std::min(1.,delta.length()));
+    react();
+}
 void Stage::walk(double budget){
     while(budget>eps && !route.empty() && status=="running"){
         Vec next=route.front(), d=next-pos;
@@ -229,10 +236,8 @@ void Stage::step(){
     time+=tick;
     bool dirty=false;
     for(auto& ob:objects){
-        if(kind==Vortex && time<=ob.end && (time-ob.born)%1000==0 &&
-           (pos-ob.pos).length()<=book[kind].radius){
-            Vec d=ob.pos-pos; shift(unit(d)*std::min(1.,d.length())); react();
-        }
+        if(kind==Vortex && time<ob.end && (time-ob.born)%vortexPeriod==0 &&
+           (pos-ob.pos).length()<=book[kind].radius) pullVortex(ob.pos);
         if(kind==Gate && (time-ob.born)%2000==0) dirty=true;
     }
     if(std::erase_if(objects,[&](auto& o){return time>=o.end;}) && kind!=Portal) dirty=true;
@@ -252,7 +257,7 @@ void Stage::step(){
             if(time>=reversing || backwards.empty()){ reversing=0; plan(true); }
         } else {
             bool slow=time<sticky;
-            if(kind==Field) for(auto& ob:objects) if((pos-ob.pos).length()<=2){slow=true;react();}
+            if(kind==Field) for(auto& ob:objects) if((pos-ob.pos).length()<=book[Field].radius){slow=true;react();}
             walk(speed*tick/1000.*(slow?.5:1));
         }
     }
@@ -291,7 +296,9 @@ std::string Stage::use(Vec click){
     if(a.target==Area || a.target==Tile){
         if(a.target==Tile) std::erase_if(objects,[&](auto& o){return cell(o.pos)==cell(click);});
         objects.push_back({a.target==Tile?tile:click,time,time+a.duration});
-        if(kind!=Portal) plan();
+        if(kind==Field && hit) react();
+        if(kind==Vortex && hit) pullVortex(click);
+        else if(kind!=Portal) plan();
         return {};
     }
     react(kind==Rewind?800:a.duration);

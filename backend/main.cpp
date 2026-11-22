@@ -193,7 +193,10 @@ public:
         v["timeLimitMs"]=limit;v["remainingMs"]=limit-game.time;
         v["cooldownRemainingMs"]=std::max(0,game.cooldown-game.time);
         v["abilities"]=abilities;v["objects"]=objects;v["owned"]=profile["owned"];
-        if(game.targetEnd>game.time) v["beacon"]=point(game.target);
+        if(game.targetEnd>game.time){
+            v["beacon"]=point(game.target);
+            v["beacon"]["remainingMs"]=game.targetEnd-game.time;
+        }
         v["selectedAbilityId"]=book[game.kind].id;v["clearsSinceUnlock"]=profile["clearsSinceUnlock"];
         v["nextUnlockAt"]=profile["owned"].size()==book.size()?JsonValue():JsonValue(profile["owned"].size());
         v["roundId"]=round;v["unlocked"]=unlocked;v["status"]=game.status;

@@ -38,7 +38,7 @@ inline constexpr std::array<Ability,16> book{{
     {"slow_field","減速フィールド","円内を歩く猫の速度を半分にする。",Area,5000,6000,2},
     {"knockback","ノックバック","猫を中心から外向きに最大2マス飛ばす。",Burst,4000,0,2},
     {"pull","引き寄せ","円内の猫を中心へ最大2マス引き寄せる。",Burst,4000,0,3},
-    {"vortex","渦","毎秒、円内の猫を中心へ1マス引き込む。",Area,7000,5000,2},
+    {"vortex","渦","設置した瞬間と、その後1秒ごとに円内の猫を中心へ最大1マス引き込む。",Area,7000,5000,2},
     {"reverse","逆走","円内の猫が3秒間、来た道を逆走する。",Burst,6000,3000,2},
     {"rewind","巻き戻し","円内の猫を3秒前の位置へ戻す。",Burst,6000,3000,2},
     {"trap","足止め罠","最初に踏んだ猫を3秒止める。",Tile,4000,8000,0},
@@ -77,6 +77,7 @@ private:
     double travel(Vec a,Vec b,double at) const;
     void plan(bool forced=false);
     void shift(Vec delta);
+    void pullVortex(Vec center);
     void moved(Vec next);
     void walk(double distance);
     void react(int duration=800);

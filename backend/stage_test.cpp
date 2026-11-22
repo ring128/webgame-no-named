@@ -36,6 +36,33 @@ void interactionChecks(){
     auto gate=g.objects.front();
     require(g.closed(gate,1999) && !g.closed(gate,2000) && g.closed(gate,4000) && !g.closed(gate,8000),"gate cycle");
 }
+void placementChecks(){
+    Stage g(1);g.begin(Vortex);
+    // Hold ordinary walking still to measure each pulse independently.
+    g.stopped=10000;
+    for(int i=0;i<7;++i) g.step();
+    const int placed=g.time;
+    const Vec center=start+Vec{0,1.75}, first=start+Vec{0,1};
+    require(g.use(center).empty() && (g.pos-first).length()<1e-6,"first pull in placement response");
+    require(g.face("calm")=="vortex","immediate hit reaction");
+    while(g.time<placed+1000-tick) g.step();
+    require((g.pos-first).length()<1e-6,"no duplicate first pull");
+    g.step();
+    require((g.pos-center).length()<1e-6,"second pull one second after placement");
+    for(int pulse=2;pulse<=4;++pulse){
+        while(g.time<placed+pulse*1000) g.step();
+        require(g.reactionEnd==g.time+800,"active vortex pulse");
+    }
+    while(g.time<placed+5000) g.step();
+    require(g.objects.empty() && g.reactionEnd==placed+4800,"no pull at expiry");
+    g.begin(Vortex);g.stopped=10000;
+    require(g.use({1.5,.5}).empty() && g.pos==start && g.reactionEnd==0,"outside vortex at placement");
+    g.pos={1.5,2};
+    while(g.time<1000) g.step();
+    require((g.pos-Vec{1.5,1}).length()<1e-6,"later entrant pulled at next pulse");
+    g.begin(Field);
+    require(g.use(g.pos).empty() && g.face("calm")=="slow_field","field active at placement");
+}
 // Deterministic replay: the same inputs go through the live game's use/step methods.
 bool play(Kind kind,unsigned seed,std::vector<std::pair<int,Vec>>& inputs) {
     Stage game(seed);
@@ -70,6 +97,7 @@ bool play(Kind kind,unsigned seed,std::vector<std::pair<int,Vec>>& inputs) {
 }
 int main(){
     interactionChecks();
+    placementChecks();
     Stage idle(1); idle.begin(Wall);
     while(idle.status=="running") idle.step();
     if(idle.status!="lost") return 1;
