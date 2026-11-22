@@ -6,7 +6,7 @@ type Ability={id:string;name:string;desc:string;cd:number;radius:number;duration
 type State={
   status:'ready'|'running'|'clear'|'lost';roundId:string;remainingMs:number;timeLimitMs:number
   width:number;height:number;map:string[];npc:Point;goal:Point;start:Point;face:string;beacon?:Point
-  objects:(Point & {closed:boolean;remainingMs:number})[];appearance:{bodyColor:string};abilities:Ability[];owned:string[]
+  objects:(Point & {closed:boolean;remainingMs:number})[];appearance:{bodyColor:string;idleFace:string};abilities:Ability[];owned:string[]
   clearsSinceUnlock:number;nextUnlockAt:number|null;selectedAbilityId:string;unlocked:string;cooldownRemainingMs:number
   skin:string;scoreMs:number;signedIn:boolean;loginConfigured:boolean
 }
@@ -15,6 +15,7 @@ const coats:Record<string,{name:string;color:string}>={
   snow:{name:'しろねこ',color:'#F8F1DD'},tabby:{name:'茶トラ',color:'#DAA46F'},
   tux:{name:'ハチワレ',color:'#534E52'},calico:{name:'三毛',color:'#F8EACF'}
 }
+const expressions={calm:'すまし顔',fierce:'きりっ',wink:'ウインク',happy:'にっこり',brow:'片眉',sleepy:'半目'}
 document.querySelector('#app')!.innerHTML=`
 <main class="notebook">
 <div class="rings" aria-hidden="true"></div>
@@ -26,7 +27,9 @@ document.querySelector('#app')!.innerHTML=`
     <div class="menu"><button data-page="stage">スタート <b>↗</b></button><button data-page="ranking">ランキング</button><button data-page="skins">スキン</button><button data-page="feedback">意見</button></div></section>
   <section id="stage" hidden><h2>ステージを選ぶ</h2><button id="garden" class="stage-card"><canvas width="220" height="140" id="mini"></canvas><span><small>STAGE 01</small><strong>石垣の庭</strong><em id="stage-limit"></em></span></button></section>
   <section id="equipment" hidden><h2>能力を選ぶ</h2><p id="progress"></p><div id="abilities" class="cards"></div><div id="brief"></div><button class="primary" id="begin">作戦開始 →</button></section>
-  <section id="skins" hidden><h2>スキン</h2><div class="cards skins" id="coats"></div></section>
+  <section id="skins" hidden><h2>スキン</h2>
+    <h3 id="coat-title">種類</h3><div class="skins" id="coats" role="group" aria-labelledby="coat-title"></div>
+    <h3 id="face-title">表情</h3><div class="skins" id="faces" role="group" aria-labelledby="face-title"></div></section>
   <section id="ranking" hidden><h2>ランキング</h2><p>妨害を解いた後、ゴールまでにかかる時間。自己ベストを長い順に掲載します。</p><div id="ranks"></div></section>
   <section id="feedback" hidden><h2>意見</h2><form id="form"><label for="comment">石垣の庭を遊んだ感想・改善案</label><textarea id="comment" rows="5" required maxlength="1000"></textarea><button class="primary">意見を保存</button><small>このゲームサーバーの意見帳に保存します。</small></form></section>
   <section id="result" hidden><div id="stamp"></div><canvas id="result-cat" width="64" height="64" aria-hidden="true"></canvas><h2 id="outcome"></h2><p id="score"></p><p id="unlock"></p><div class="actions"><button class="primary" data-page="equipment">再挑戦</button><button data-page="ranking">ランキング</button></div></section>
@@ -51,6 +54,30 @@ function card(label:string,img:HTMLCanvasElement,active:boolean,click:()=>void){
   const button=document.createElement('button');button.className='card';button.setAttribute('aria-pressed',String(active))
   button.append(picture(img),document.createTextNode(label));button.onclick=click;return button
 }
+let skinSave=Promise.resolve()
+function skinRow(rowId:string,field:'skin'|'idleFace',options:Record<string,string>){
+  const buttons=Object.entries(options).map(([id,label])=>{
+    const button=document.createElement('button')
+    const preview=document.createElement('canvas')
+    preview.width=preview.height=32
+    button.className='card';button.append(preview,label)
+    button.onclick=()=>{
+      skinSave=skinSave.then(async()=>{await send('skin',{[field]:id})})
+    }
+    el(rowId).append(button)
+    return {id,button,preview}
+  })
+  return (state:State)=>{
+    for(const {id,button,preview} of buttons){
+      const coat=field==='skin'?id:state.skin
+      const face=field==='idleFace'?id:state.appearance.idleFace
+      paint(preview,cat(face,coats[coat]?.color??state.appearance.bodyColor,coat))
+      button.setAttribute('aria-pressed',String(id===(field==='skin'?state.skin:state.appearance.idleFace)))
+    }
+  }
+}
+const paintCoats=skinRow('coats','skin',Object.fromEntries(Object.entries(coats).map(([id,coat])=>[id,coat.name])))
+const paintFaces=skinRow('faces','idleFace',expressions)
 function show(next:Page){
   page=next;rankingVersion++;el('notice').textContent=''
   for(const id of ['home','stage','equipment','skins','ranking','feedback','play','result'])el(id).hidden=id!==next
@@ -66,10 +93,9 @@ function show(next:Page){
     g.fillStyle='#b34c36';g.fillRect(s.goal.x*20-5,s.goal.y*20-5,10,10)
     el('stage-limit').textContent='制限時間 '+s.timeLimitMs/1000+'秒　→'
   }
-  if(next==='home')paint(el('cover-cat'),cat('brow',coats[s?.skin??'snow']?.color??coats.snow.color,s?.skin))
+  if(next==='home')paint(el('cover-cat'),cat(s?.appearance.idleFace??'calm',coats[s?.skin??'snow']?.color??coats.snow.color,s?.skin))
   if(!s)return
-  if(next==='skins')el('coats').replaceChildren(...Object.entries(coats).map(([id,v])=>
-    card(v.name,cat('calm',v.color,id),s!.skin===id,async()=>{if(await send('skin',{skin:id}))show('skins')})))
+  if(next==='skins'){paintCoats(s);paintFaces(s)}
   if(next==='equipment'){
     el('abilities').replaceChildren(...s.abilities.map(a=>{
       const owned=s!.owned.includes(a.id)
@@ -113,6 +139,9 @@ async function request(name='state',body?:unknown){
       el('charge').textContent=next.cooldownRemainingMs?'あと '+(next.cooldownRemainingMs/1000).toFixed(1)+'秒':'使用可'
     } else if(prev?.status==='running')show(next.status==='ready'?'home':'result')
     else if(!prev)show(location.hash.startsWith('#rank')?'ranking':page)
+    else if(prev.skin!==next.skin || prev.appearance.idleFace!==next.appearance.idleFace){
+      if(page==='skins' || page==='home')show(page)
+    }
     return true
   }catch(error){tell(error instanceof Error?error.message:'接続できません');return false}
 }
@@ -190,7 +219,7 @@ function draw(){
   }
   function pad(p:Point,label:string,color:string){
     const x=p.x*tile,y=p.y*tile;box(x-48,y-48,96,96,color);box(x-40,y-40,80,80,'#364d49')
-    ctx.font='bold 40px monospace';ctx.textAlign='center';ctx.fillStyle=color;ctx.fillText(label,x,y+14)
+    ctx.font='40px DotGothic16, monospace';ctx.textAlign='center';ctx.fillStyle=color;ctx.fillText(label,x,y+14)
   }
   pad(s.start,selected==='portal'?'↩':'S','#dbdfb0');pad(s.goal,'G','#f8d294')
   const a=s.abilities.find(i=>i.id===selected)!

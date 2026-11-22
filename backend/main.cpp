@@ -128,10 +128,22 @@ public:
         }
         if(name=="skin"){
             if(game.status=="running") throw RequestError{409,"プレイ中です"};
-            auto id=body.get("skin","");
-            if(!id.isString() || !coats.contains(id.asString())) throw RequestError{400,"スキンを選んでください"};
-            auto next=profile;next["skin"]=id;next["appearance"]["idleFace"]="calm";
-            next["appearance"]["bodyColor"]=coats.at(id.asString());save(next);return;
+            if(!body.isMember("skin") && !body.isMember("idleFace"))
+                throw RequestError{400,"種類か表情を選んでください"};
+            auto next=profile;
+            if(body.isMember("skin")){
+                const auto& id=body["skin"];
+                if(!id.isString() || !coats.contains(id.asString())) throw RequestError{400,"種類を選んでください"};
+                next["skin"]=id;
+                next["appearance"]["bodyColor"]=coats.at(id.asString());
+            }
+            if(body.isMember("idleFace")){
+                const auto& face=body["idleFace"];
+                if(!face.isString() || !faces.contains(face.asString())) throw RequestError{400,"表情を選んでください"};
+                next["appearance"]["idleFace"]=face;
+            }
+            if(next!=profile) save(next);
+            return;
         }
         if(name=="start"){
             if(game.status=="running") throw RequestError{409,"プレイ中です"};
